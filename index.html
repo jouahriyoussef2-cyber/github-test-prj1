@@ -1,0 +1,293 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MiniCraft 3D</title>
+
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  overflow: hidden;
+  font-family: Arial, sans-serif;
+  background: #87ceeb;
+}
+
+#ui {
+  position: fixed;
+  top: 20px;
+  left: 20px;
+  color: white;
+  background: #0008;
+  padding: 15px;
+  border-radius: 10px;
+  z-index: 2;
+  line-height: 1.7;
+}
+
+#crosshair {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  color: white;
+  font-size: 25px;
+  transform: translate(-50%,-50%);
+  pointer-events: none;
+  text-shadow: 1px 1px black;
+}
+
+#start {
+  position: fixed;
+  inset: 0;
+  background: #0009;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+  color: white;
+  z-index: 5;
+  gap: 20px;
+}
+
+button {
+  padding: 15px 35px;
+  border: 0;
+  border-radius: 8px;
+  background: #48a832;
+  color: white;
+  font-size: 20px;
+  cursor: pointer;
+}
+
+#block {
+  position: fixed;
+  bottom: 25px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #0009;
+  color: white;
+  padding: 12px 25px;
+  border-radius: 8px;
+}
+</style>
+</head>
+
+<body>
+
+<div id="ui">
+  <b>🌍 MiniCraft 3D</b><br>
+  WASD: Move<br>
+  SPACE: Jump<br>
+  Mouse: Look around<br>
+  Left Click: Break block<br>
+  Right Click: Place block<br>
+  <span id="score">Blocks: 0</span>
+</div>
+
+<div id="crosshair">+</div>
+<div id="block">🟩 Grass Block</div>
+
+<div id="start">
+  <h1>🌳 MiniCraft 3D</h1>
+  <p>Explore your little block world!</p>
+  <button id="play">PLAY GAME</button>
+  <small>Click the screen to control the camera</small>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+<script>
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87ceeb);
+scene.fog = new THREE.Fog(0x87ceeb, 15, 45);
+
+const camera = new THREE.PerspectiveCamera(
+  75, window.innerWidth/window.innerHeight, 0.1, 1000
+);
+
+const renderer = new THREE.WebGLRenderer({antialias:false});
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x667744, 2));
+
+const sun = new THREE.DirectionalLight(0xffffff, 2);
+sun.position.set(10,20,10);
+sun.castShadow = true;
+scene.add(sun);
+
+const materials = {
+  grass: new THREE.MeshLambertMaterial({color:0x55aa33}),
+  dirt: new THREE.MeshLambertMaterial({color:0x80502b}),
+  stone: new THREE.MeshLambertMaterial({color:0x888888}),
+  wood: new THREE.MeshLambertMaterial({color:0x79502a}),
+  leaves: new THREE.MeshLambertMaterial({color:0x27852a})
+};
+
+const geometry = new THREE.BoxGeometry(1,1,1);
+const blocks = [];
+
+function addBlock(x,y,z,type="grass") {
+  const block = new THREE.Mesh(geometry, materials[type]);
+  block.position.set(x,y,z);
+  block.userData.type = type;
+  block.castShadow = true;
+  block.receiveShadow = true;
+  scene.add(block);
+  blocks.push(block);
+  return block;
+}
+
+// Create terrain
+for(let x=-12; x<=12; x++) {
+  for(let z=-12; z<=12; z++) {
+    addBlock(x,-1,z,"dirt");
+    addBlock(x,0,z,"grass");
+  }
+}
+
+// Create trees
+function tree(x,z) {
+  for(let y=1; y<=3; y++) addBlock(x,y,z,"wood");
+
+  for(let dx=-2; dx<=2; dx++) {
+    for(let dz=-2; dz<=2; dz++) {
+      for(let dy=3; dy<=5; dy++) {
+        if(Math.abs(dx)+Math.abs(dz)+Math.abs(dy-4)<=4) {
+          addBlock(x+dx,dy,z+dz,"leaves");
+        }
+      }
+    }
+  }
+}
+
+tree(4,4);
+tree(-5,3);
+tree(6,-6);
+tree(-7,-5);
+
+// Player
+camera.position.set(0,2,5);
+
+let yaw = 0;
+let pitch = 0;
+let velocityY = 0;
+let onGround = false;
+
+const keys = {};
+
+document.addEventListener("keydown", e => keys[e.code] = true);
+document.addEventListener("keyup", e => keys[e.code] = false);
+
+document.addEventListener("mousemove", e => {
+  if(document.pointerLockElement === renderer.domElement) {
+    yaw -= e.movementX * 0.002;
+    pitch -= e.movementY * 0.002;
+    pitch = Math.max(-1.5, Math.min(1.5,pitch));
+  }
+});
+
+document.getElementById("play").onclick = () => {
+  document.getElementById("start").style.display = "none";
+  renderer.domElement.requestPointerLock();
+};
+
+renderer.domElement.addEventListener("click", () => {
+  if(document.pointerLockElement !== renderer.domElement) {
+    renderer.domElement.requestPointerLock();
+  }
+});
+
+// Block interaction
+const raycaster = new THREE.Raycaster();
+raycaster.far = 6;
+
+let selectedBlock = null;
+
+function targetBlock() {
+  raycaster.setFromCamera(new THREE.Vector2(0,0),camera);
+  const hits = raycaster.intersectObjects(blocks);
+  return hits.length ? hits[0] : null;
+}
+
+document.addEventListener("mousedown", e => {
+  if(document.pointerLockElement !== renderer.domElement) return;
+
+  const hit = targetBlock();
+  if(!hit) return;
+
+  const block = hit.object;
+
+  if(e.button === 0) {
+    scene.remove(block);
+    blocks.splice(blocks.indexOf(block),1);
+    document.getElementById("score").textContent =
+      "Blocks: " + blocks.length;
+  }
+
+  if(e.button === 2) {
+    const p = block.position.clone().add(hit.face.normal);
+    addBlock(Math.round(p.x),Math.round(p.y),Math.round(p.z),"grass");
+  }
+});
+
+document.addEventListener("contextmenu", e => e.preventDefault());
+
+// Game loop
+function animate() {
+  requestAnimationFrame(animate);
+
+  camera.rotation.order = "YXZ";
+  camera.rotation.y = yaw;
+  camera.rotation.x = pitch;
+
+  const speed = 0.09;
+
+  const forward = new THREE.Vector3(
+    -Math.sin(yaw),0,-Math.cos(yaw)
+  );
+
+  const right = new THREE.Vector3(
+    Math.cos(yaw),0,-Math.sin(yaw)
+  );
+
+  if(keys["KeyW"]) camera.position.addScaledVector(forward,speed);
+  if(keys["KeyS"]) camera.position.addScaledVector(forward,-speed);
+  if(keys["KeyA"]) camera.position.addScaledVector(right,-speed);
+  if(keys["KeyD"]) camera.position.addScaledVector(right,speed);
+
+  if(keys["Space"] && onGround) {
+    velocityY = 0.18;
+    onGround = false;
+  }
+
+  velocityY -= 0.009;
+  camera.position.y += velocityY;
+
+  if(camera.position.y <= 2) {
+    camera.position.y = 2;
+    velocityY = 0;
+    onGround = true;
+  }
+
+  camera.position.x = THREE.MathUtils.clamp(camera.position.x,-11,11);
+  camera.position.z = THREE.MathUtils.clamp(camera.position.z,-11,11);
+
+  renderer.render(scene,camera);
+}
+
+animate();
+
+window.addEventListener("resize", () => {
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth,window.innerHeight);
+});
+</script>
+
+</body>
+</html>
